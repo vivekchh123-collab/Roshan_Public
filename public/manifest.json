@@ -1,0 +1,13 @@
+{
+  "name": "Roshan Tubes",
+  "short_name": "Roshan Tubes",
+  "description": "Solar, electrical and hardware solutions",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0b57c8",
+  "icons": [
+    { "src": "/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/logo.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" }
+  ]
+}
