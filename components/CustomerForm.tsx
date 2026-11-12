@@ -2,12 +2,33 @@
 import { useEffect, useRef, useState } from "react";
 import { CameraIcon, UploadIcon } from "./Icons";
 import { useApp } from "./Providers";
-import { compressImage, stampPhoto } from "@/lib/image";
+import { stampPhoto } from "@/lib/image";
 
 type Loc = { lat: number; lng: number; accuracy: number; when: Date };
 type DocKey = "pan" | "aadhaar" | "bill" | "bank";
+type ShareResult = "shared" | "cancelled" | "unsupported";
 
 const OWNER_WA = "917376721717";
+
+// Opens the phone's share sheet with the real photos attached (choose WhatsApp -> owner chat -> Send).
+// Must be called straight from a button tap. Falls back to opening the owner's WhatsApp chat with the text only.
+function startShare(files: File[], text: string): Promise<ShareResult> {
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+  if (navigator.share && nav.canShare?.({ files })) {
+    return navigator.share({ files, text }).then(
+      () => "shared" as const,
+      (e: DOMException) =>
+        e.name === "AbortError"
+          ? ("cancelled" as const)
+          : ("unsupported" as const),
+    );
+  }
+  window.open(
+    `https://wa.me/${OWNER_WA}?text=${encodeURIComponent(text)}`,
+    "_blank",
+  );
+  return Promise.resolve("unsupported" as const);
+}
 
 function FilePick({
   label,
@@ -85,8 +106,9 @@ export default function CustomerForm({
   const [reason, setReason] = useState("");
   const [callback, setCallback] = useState("");
   const [busy, setBusy] = useState(false);
-  const [waText, setWaText] = useState("");
-  const [shareFiles, setShareFiles] = useState<File[]>([]);
+  const [last, setLast] = useState<{ files: File[]; text: string } | null>(
+    null,
+  );
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const photoCam = useRef<HTMLInputElement>(null);
   const photoUp = useRef<HTMLInputElement>(null);
@@ -174,10 +196,10 @@ export default function CustomerForm({
     );
   }
 
-  async function submit() {
+  // ONE button: saves the text details to the owner website AND sends the real photos + details on WhatsApp.
+  // Nothing before the share call is awaited, so the phone still treats it as a direct tap.
+  async function sendOnWhatsApp() {
     setMsg(null);
-    setWaText("");
-    setShareFiles([]);
     if (!name.trim() || !/^\d{10}$/.test(mobile)) {
       setMsg({
         ok: false,
@@ -198,22 +220,22 @@ export default function CustomerForm({
       });
       return;
     }
+    if (!stamped) {
+      setMsg({
+        ok: false,
+        text: tx(
+          "Add the site photo first (it gets the GPS strip).",
+          "पहले साइट फोटो जोड़ें (उस पर GPS स्ट्रिप लगेगी)।",
+        ),
+      });
+      return;
+    }
     if (interested === null) {
       setMsg({
         ok: false,
         text: tx(
           "Choose Interested or Not interested.",
           "इच्छुक या अनिच्छुक चुनें।",
-        ),
-      });
-      return;
-    }
-    if (interested && !stamped) {
-      setMsg({
-        ok: false,
-        text: tx(
-          "Add the site photo (it gets the GPS strip).",
-          "साइट फोटो जोड़ें (उस पर GPS स्ट्रिप लगेगी)।",
         ),
       });
       return;
@@ -229,106 +251,110 @@ export default function CustomerForm({
       return;
     }
 
-    setBusy(true);
-    try {
-      const r = await fetch("/api/customer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name,
-          mobile,
-          location: address,
-          lat: loc.lat,
-          lng: loc.lng,
-          interested,
-          reason,
-          callback: callback ? new Date(callback).toISOString() : null,
-        }),
-      });
-      const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || "Failed");
+    // message for WhatsApp
+    const ist = (d: Date) =>
+      d.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
+    const text = [
+      interested ? "✅ NEW INTERESTED CUSTOMER" : "❌ CUSTOMER NOT INTERESTED",
+      `Name: ${name.trim()}`,
+      `Mobile: ${mobile}`,
+      `Location: ${address || "-"}`,
+      `Map: https://maps.google.com/?q=${loc.lat},${loc.lng}`,
+      `Employee: ${employeeName}`,
+      `Time: ${ist(new Date())}`,
+      ...(interested
+        ? []
+        : [
+            "",
+            `Reason: ${reason.trim()}`,
+            `Preferred callback: ${ist(new Date(callback))}`,
+          ]),
+    ].join("\n");
 
-      // Photos stay on this phone and go to the owner through WhatsApp (nothing is uploaded to a server).
-      const files: File[] = [];
-      if (interested && stamped) {
-        const base = name.trim().replace(/[^A-Za-z0-9]+/g, "_") || "customer";
-        files.push(
-          new File([stamped], `${base}-gps-site.jpg`, { type: "image/jpeg" }),
-        );
-        for (const k of Object.keys(docs) as DocKey[]) {
-          const f = docs[k];
-          if (f)
-            files.push(
-              new File([await compressImage(f)], `${base}-${k}.jpg`, {
-                type: "image/jpeg",
-              }),
-            );
-        }
+    // the real photos (GPS site photo first, then the documents for Interested)
+    const base = name.trim().replace(/[^A-Za-z0-9]+/g, "_") || "customer";
+    const files: File[] = [
+      new File([stamped], `${base}-gps-site.jpg`, { type: "image/jpeg" }),
+    ];
+    if (interested) {
+      for (const k of Object.keys(docs) as DocKey[]) {
+        const f = docs[k];
+        if (f)
+          files.push(
+            new File([f], `${base}-${k}.jpg`, { type: f.type || "image/jpeg" }),
+          );
       }
-      setShareFiles(files);
-      setWaText(j.text || "");
-      setMsg({
-        ok: true,
-        text: tx(
-          "Saved. Now send it to the owner on WhatsApp: tap the green button below.",
-          "सेव हो गया। अब ओनर को WhatsApp पर भेजें: नीचे हरा बटन दबाएँ।",
-        ),
-      });
-      // try to open the WhatsApp share sheet right away (if the phone blocks it, the green button below still works)
-      if (files.length) void nativeShare(files, j.text || "");
-      setRaw(null);
-      setLoc(null);
-      setAddress("");
-      setTitle("");
-      setName("");
-      setMobile("");
-      setInterested(null);
-      setDocs({ pan: null, aadhaar: null, bill: null, bank: null });
-      setReason("");
-      setCallback("");
-    } catch (e) {
-      setMsg({ ok: false, text: String((e as Error).message || e) });
-    } finally {
-      setBusy(false);
     }
-  }
 
-  // Photos: open the phone's share sheet with the photos attached (pick WhatsApp, then the owner chat).
-  async function nativeShare(
-    files: File[],
-    text: string,
-  ): Promise<"shared" | "cancelled" | "unsupported"> {
-    const nav = navigator as Navigator & {
-      canShare?: (d: ShareData) => boolean;
-    };
-    if (!navigator.share || !nav.canShare?.({ files })) return "unsupported";
-    try {
-      await navigator.share({ files, text });
-      return "shared";
-    } catch (e) {
-      return (e as DOMException).name === "AbortError"
-        ? "cancelled"
-        : "unsupported";
-    }
-  }
+    setBusy(true);
+    // 1) save the text details (no photos) so they appear on the owner website
+    const savePromise = fetch("/api/customer", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name,
+        mobile,
+        location: address,
+        lat: loc.lat,
+        lng: loc.lng,
+        interested,
+        reason,
+        callback: callback ? new Date(callback).toISOString() : null,
+      }),
+    })
+      .then(async (r) => {
+        const j = await r.json().catch(() => ({}));
+        return r.ok
+          ? { ok: true as const }
+          : { ok: false as const, error: String(j.error || "Failed") };
+      })
+      .catch((e) => ({ ok: false as const, error: String(e) }));
+    // 2) at the same moment open WhatsApp with the photos attached
+    const sharePromise = startShare(files, text);
 
-  async function sendOnWhatsApp() {
-    if (shareFiles.length) {
-      const r = await nativeShare(shareFiles, waText);
-      if (r !== "unsupported") return;
+    const [saved, shared] = await Promise.all([savePromise, sharePromise]);
+    setBusy(false);
+
+    if (!saved.ok) {
       setMsg({
         ok: false,
         text: tx(
-          "This phone cannot attach photos automatically. Send the photos from your gallery in the WhatsApp chat.",
-          "यह फोन फोटो अपने-आप नहीं जोड़ सकता। WhatsApp चैट में गैलरी से फोटो भेजें।",
+          `Could not save to the owner website: ${saved.error}. Fix it and tap the button again.`,
+          `ओनर वेबसाइट में सेव नहीं हुआ: ${saved.error}। ठीक करके बटन दोबारा दबाएँ।`,
         ),
       });
+      return;
     }
-    // text only (also used for Not interested): opens the owner's WhatsApp chat directly
-    window.open(
-      `https://wa.me/${OWNER_WA}?text=${encodeURIComponent(waText)}`,
-      "_blank",
-    );
+
+    setLast({ files, text });
+    setMsg({
+      ok: shared === "shared",
+      text:
+        shared === "shared"
+          ? tx(
+              "Done. Saved on the owner website and sent on WhatsApp.",
+              "हो गया। ओनर वेबसाइट में सेव हुआ और WhatsApp पर भेजा गया।",
+            )
+          : shared === "cancelled"
+            ? tx(
+                'Saved on the owner website, but WhatsApp was not sent. Tap "Send the last customer again on WhatsApp" below.',
+                'ओनर वेबसाइट में सेव हो गया, पर WhatsApp नहीं भेजा। नीचे "पिछला ग्राहक WhatsApp पर दोबारा भेजें" दबाएँ।',
+              )
+            : tx(
+                "Saved on the owner website. This phone cannot attach photos automatically, so WhatsApp opened with the details only. Please send the photos from your gallery in that chat.",
+                "ओनर वेबसाइट में सेव हो गया। यह फोन फोटो अपने-आप नहीं जोड़ सकता, इसलिए WhatsApp में सिर्फ विवरण खुला है। उसी चैट में गैलरी से फोटो भेजें।",
+              ),
+    });
+    setRaw(null);
+    setLoc(null);
+    setAddress("");
+    setTitle("");
+    setName("");
+    setMobile("");
+    setInterested(null);
+    setDocs({ pan: null, aadhaar: null, bill: null, bank: null });
+    setReason("");
+    setCallback("");
   }
 
   const docLabels: Record<DocKey, [string, string]> = {
@@ -497,8 +523,8 @@ export default function CustomerForm({
           ))}
           <p className="text-xs text-slate-500">
             {tx(
-              "The GPS-tagged site photo from step 1 is sent together with these on WhatsApp after you submit.",
-              "चरण 1 की GPS-टैग साइट फोटो इनके साथ सबमिट के बाद WhatsApp पर भेजी जाती है।",
+              "These photos and the GPS site photo go straight to the owner on WhatsApp. They are not saved on the website.",
+              "ये फोटो और GPS साइट फोटो सीधे ओनर को WhatsApp पर जाती हैं। वेबसाइट पर सेव नहीं होतीं।",
             )}
           </p>
         </section>
@@ -532,6 +558,12 @@ export default function CustomerForm({
               onChange={(e) => setCallback(e.target.value)}
             />
           </div>
+          <p className="text-xs text-slate-500">
+            {tx(
+              "The GPS site photo and these details go straight to the owner on WhatsApp.",
+              "GPS साइट फोटो और ये विवरण सीधे ओनर को WhatsApp पर जाते हैं।",
+            )}
+          </p>
         </section>
       )}
 
@@ -543,34 +575,38 @@ export default function CustomerForm({
         </p>
       )}
 
-      {waText && (
-        <>
-          <button
-            type="button"
-            onClick={sendOnWhatsApp}
-            className="btn mt-3 w-full !bg-green-600"
-          >
-            {shareFiles.length
-              ? tx(
-                  `Send ${shareFiles.length} photo(s) + details on WhatsApp`,
-                  `${shareFiles.length} फोटो + विवरण WhatsApp पर भेजें`,
-                )
-              : tx("Send details on WhatsApp", "विवरण WhatsApp पर भेजें")}
-          </button>
-          <p className="mt-1 text-xs text-slate-500">
-            {tx(
-              "In the list that opens, choose WhatsApp, then the owner chat (7376721717), then Send.",
-              "जो सूची खुले उसमें WhatsApp चुनें, फिर ओनर चैट (7376721717), फिर Send।",
-            )}
-          </p>
-        </>
-      )}
-
-      <button className="btn mt-4 w-full" onClick={submit} disabled={busy}>
+      <button
+        type="button"
+        className="btn mt-4 w-full !bg-green-600 !py-3.5 !text-base"
+        onClick={sendOnWhatsApp}
+        disabled={busy}
+      >
         {busy
-          ? tx("Submitting…", "सबमिट हो रहा है…")
-          : tx("Submit", "सबमिट करें")}
+          ? tx(
+              "Saving and opening WhatsApp…",
+              "सेव हो रहा है और WhatsApp खुल रहा है…",
+            )
+          : "📲 " + tx("Send on WhatsApp", "WhatsApp पर भेजें")}
       </button>
+      <p className="mt-1 text-xs text-slate-500">
+        {tx(
+          "In the list that opens choose WhatsApp, then the owner chat, then Send.",
+          "जो सूची खुले उसमें WhatsApp, फिर ओनर चैट चुनें, फिर Send दबाएँ।",
+        )}
+      </p>
+
+      {last && (
+        <button
+          type="button"
+          className="btn-outline mt-3 w-full"
+          onClick={() => void startShare(last.files, last.text)}
+        >
+          {tx(
+            "Send the last customer again on WhatsApp",
+            "पिछला ग्राहक WhatsApp पर दोबारा भेजें",
+          )}
+        </button>
+      )}
     </div>
   );
 }

@@ -4,8 +4,8 @@ import { db } from "@/lib/supabase";
 
 export const runtime = "nodejs";
 
-// Saves the customer in the database (so the owner website can list it).
-// NOTHING is sent to Telegram or Gmail. The details + photos go to the owner on WhatsApp from the employee's phone (see CustomerForm).
+// Saves ONLY the text details (name, mobile, location, status, reason) so the owner website can list them.
+// No photo is ever stored. The photos and the message go to the owner on WhatsApp from the employee's phone (see CustomerForm).
 export async function POST(req: Request) {
   const emp = await getEmployee();
   if (!emp) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
@@ -62,15 +62,5 @@ export async function POST(req: Request) {
   if (error)
     return NextResponse.json({ error: error.message }, { status: 500 });
 
-  // Text that the employee's phone will send to the owner on WhatsApp
-  const when = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" });
-  const maps = `https://maps.google.com/?q=${lat},${lng}`;
-  const head = interested
-    ? "✅ NEW INTERESTED CUSTOMER"
-    : "❌ CUSTOMER NOT INTERESTED";
-  let text = `${head}\nName: ${name}\nMobile: ${mobile}\nLocation: ${location || "-"}\nMap: ${maps}\nEmployee: ${emp.displayName}${emp.mobile ? ` (${emp.mobile})` : ""}\nTime: ${when}`;
-  if (!interested)
-    text += `\n\nReason: ${reason}\nPreferred callback: ${callback!.toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })}`;
-
-  return NextResponse.json({ ok: true, id: row.id, text });
+  return NextResponse.json({ ok: true, id: row.id });
 }
