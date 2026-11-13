@@ -5,10 +5,17 @@ import { useApp } from "./Providers";
 import { stampPhoto } from "@/lib/image";
 
 type Loc = { lat: number; lng: number; accuracy: number; when: Date };
-type DocKey = "pan" | "aadhaar" | "bill" | "bank";
+type DocKey = "pan" | "aadhaar_front" | "aadhaar_back" | "bill" | "bank";
 type ShareResult = "shared" | "cancelled" | "unsupported";
 
 const OWNER_WA = "917376721717";
+const NO_DOCS: Record<DocKey, File | null> = {
+  pan: null,
+  aadhaar_front: null,
+  aadhaar_back: null,
+  bill: null,
+  bank: null,
+};
 
 // Opens the phone's share sheet with the real photos attached (choose WhatsApp -> owner chat -> Send).
 // Must be called straight from a button tap. Falls back to opening the owner's WhatsApp chat with the text only.
@@ -97,12 +104,7 @@ export default function CustomerForm({
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [interested, setInterested] = useState<boolean | null>(null);
-  const [docs, setDocs] = useState<Record<DocKey, File | null>>({
-    pan: null,
-    aadhaar: null,
-    bill: null,
-    bank: null,
-  });
+  const [docs, setDocs] = useState<Record<DocKey, File | null>>(NO_DOCS);
   const [reason, setReason] = useState("");
   const [callback, setCallback] = useState("");
   const [busy, setBusy] = useState(false);
@@ -352,14 +354,15 @@ export default function CustomerForm({
     setName("");
     setMobile("");
     setInterested(null);
-    setDocs({ pan: null, aadhaar: null, bill: null, bank: null });
+    setDocs(NO_DOCS);
     setReason("");
     setCallback("");
   }
 
   const docLabels: Record<DocKey, [string, string]> = {
     pan: ["PAN card photo", "पैन कार्ड फोटो"],
-    aadhaar: ["Aadhaar photo", "आधार फोटो"],
+    aadhaar_front: ["Aadhaar photo – FRONT side", "आधार फोटो – आगे की तरफ़"],
+    aadhaar_back: ["Aadhaar photo – BACK side", "आधार फोटो – पीछे की तरफ़"],
     bill: ["Electricity bill connection photo", "बिजली बिल कनेक्शन फोटो"],
     bank: ["Bank passbook photo", "बैंक पासबुक फोटो"],
   };
