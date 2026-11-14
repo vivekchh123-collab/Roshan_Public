@@ -274,3 +274,82 @@ export async function stampPhoto(file: Blob, info: StampInfo): Promise<Blob> {
     ),
   );
 }
+
+/**
+ * Draws the customer details as a picture (name, mobile, location, reason...) and returns it as a File.
+ * WhatsApp often drops the typed message when several photos are shared at once, but it never drops a photo,
+ * so the details travel inside this first picture. It is fully synchronous so it can be used right inside a button tap.
+ */
+export function detailsCardFile(
+  title: string,
+  accent: string,
+  rows: [string, string][],
+  fileName: string,
+): File {
+  const W = 1080,
+    pad = 48,
+    labelW = 250;
+  const c = document.createElement("canvas");
+  c.width = W;
+  const ctx = c.getContext("2d")!;
+  const font = (px: number, bold = false) =>
+    `${bold ? "bold " : ""}${px}px sans-serif`;
+
+  // measure first so the card is exactly as tall as the text
+  ctx.font = font(40);
+  const lineH = 54;
+  const wrapped = rows.map(([k, v]) => {
+    const words = (v || "-").split(/\s+/);
+    const lines: string[] = [];
+    let cur = "";
+    for (const w of words) {
+      const t = cur ? `${cur} ${w}` : w;
+      if (ctx.measureText(t).width <= W - pad * 2 - labelW) cur = t;
+      else {
+        if (cur) lines.push(cur);
+        cur = w;
+      }
+    }
+    if (cur) lines.push(cur);
+    return { k, lines: lines.length ? lines : ["-"] };
+  });
+  const bodyH = wrapped.reduce((s, r) => s + r.lines.length * lineH + 18, 0);
+  const headH = 130;
+  c.height = headH + bodyH + pad;
+
+  const g = c.getContext("2d")!;
+  g.fillStyle = "#ffffff";
+  g.fillRect(0, 0, W, c.height);
+  g.fillStyle = accent;
+  g.fillRect(0, 0, W, headH);
+  g.fillStyle = "#ffffff";
+  g.textBaseline = "alphabetic";
+  g.font = font(48, true);
+  g.fillText(title, pad, 62);
+  g.font = font(30);
+  g.fillText("Roshan Tubes", pad, 108);
+
+  let y = headH + 60;
+  for (const r of wrapped) {
+    g.fillStyle = "#64748b";
+    g.font = font(34, true);
+    g.fillText(r.k, pad, y);
+    g.fillStyle = "#0f172a";
+    g.font = font(40);
+    r.lines.forEach((ln, i) => g.fillText(ln, pad + labelW, y + i * lineH));
+    y += r.lines.length * lineH + 18;
+    g.strokeStyle = "#e2e8f0";
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(pad, y - 40);
+    g.lineTo(W - pad, y - 40);
+    g.stroke();
+  }
+
+  // dataURL -> bytes, synchronously
+  const b64 = c.toDataURL("image/jpeg", 0.9).split(",")[1];
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new File([bytes], fileName, { type: "image/jpeg" });
+}

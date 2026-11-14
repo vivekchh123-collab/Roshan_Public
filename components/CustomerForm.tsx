@@ -2,20 +2,13 @@
 import { useEffect, useRef, useState } from "react";
 import { CameraIcon, UploadIcon } from "./Icons";
 import { useApp } from "./Providers";
-import { stampPhoto } from "@/lib/image";
+import { stampPhoto, detailsCardFile } from "@/lib/image";
 
 type Loc = { lat: number; lng: number; accuracy: number; when: Date };
 type DocKey = "pan" | "aadhaar_front" | "aadhaar_back" | "bill" | "bank";
 type ShareResult = "shared" | "cancelled" | "unsupported";
 
 const OWNER_WA = "917376721717";
-const NO_DOCS: Record<DocKey, File | null> = {
-  pan: null,
-  aadhaar_front: null,
-  aadhaar_back: null,
-  bill: null,
-  bank: null,
-};
 
 // Opens the phone's share sheet with the real photos attached (choose WhatsApp -> owner chat -> Send).
 // Must be called straight from a button tap. Falls back to opening the owner's WhatsApp chat with the text only.
@@ -104,7 +97,13 @@ export default function CustomerForm({
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
   const [interested, setInterested] = useState<boolean | null>(null);
-  const [docs, setDocs] = useState<Record<DocKey, File | null>>(NO_DOCS);
+  const [docs, setDocs] = useState<Record<DocKey, File | null>>({
+    pan: null,
+    aadhaar_front: null,
+    aadhaar_back: null,
+    bill: null,
+    bank: null,
+  });
   const [reason, setReason] = useState("");
   const [callback, setCallback] = useState("");
   const [busy, setBusy] = useState(false);
@@ -275,7 +274,28 @@ export default function CustomerForm({
 
     // the real photos (GPS site photo first, then the documents for Interested)
     const base = name.trim().replace(/[^A-Za-z0-9]+/g, "_") || "customer";
+    // First picture = a details card (name, mobile, location...). WhatsApp can drop typed text when many photos are shared,
+    // but a picture always arrives, so the details are guaranteed to reach the owner.
+    const card = detailsCardFile(
+      interested ? "✔ NEW INTERESTED CUSTOMER" : "✘ CUSTOMER NOT INTERESTED",
+      interested ? "#15803d" : "#b91c1c",
+      [
+        ["Name", name.trim()],
+        ["Mobile", mobile],
+        ["Location", address || "-"],
+        ["Employee", employeeName],
+        ["Time", ist(new Date())],
+        ...(interested
+          ? []
+          : ([
+              ["Reason", reason.trim()],
+              ["Callback", ist(new Date(callback))],
+            ] as [string, string][])),
+      ],
+      `${base}-details.jpg`,
+    );
     const files: File[] = [
+      card,
       new File([stamped], `${base}-gps-site.jpg`, { type: "image/jpeg" }),
     ];
     if (interested) {
@@ -286,6 +306,13 @@ export default function CustomerForm({
             new File([f], `${base}-${k}.jpg`, { type: f.type || "image/jpeg" }),
           );
       }
+    }
+
+    // also copy the text, so it can be pasted in the chat if the phone's WhatsApp ignores it
+    try {
+      void navigator.clipboard?.writeText(text).catch(() => {});
+    } catch {
+      /* ignore */
     }
 
     setBusy(true);
@@ -354,7 +381,13 @@ export default function CustomerForm({
     setName("");
     setMobile("");
     setInterested(null);
-    setDocs(NO_DOCS);
+    setDocs({
+      pan: null,
+      aadhaar_front: null,
+      aadhaar_back: null,
+      bill: null,
+      bank: null,
+    });
     setReason("");
     setCallback("");
   }
@@ -593,22 +626,53 @@ export default function CustomerForm({
       </button>
       <p className="mt-1 text-xs text-slate-500">
         {tx(
-          "In the list that opens choose WhatsApp, then the owner chat, then Send.",
-          "जो सूची खुले उसमें WhatsApp, फिर ओनर चैट चुनें, फिर Send दबाएँ।",
+          "In the list that opens choose WhatsApp, then the owner chat, then Send. The first picture shows the customer details.",
+          "जो सूची खुले उसमें WhatsApp, फिर ओनर चैट चुनें, फिर Send दबाएँ। पहली फोटो में ग्राहक का विवरण है।",
         )}
       </p>
 
       {last && (
-        <button
-          type="button"
-          className="btn-outline mt-3 w-full"
-          onClick={() => void startShare(last.files, last.text)}
-        >
-          {tx(
-            "Send the last customer again on WhatsApp",
-            "पिछला ग्राहक WhatsApp पर दोबारा भेजें",
-          )}
-        </button>
+        <div className="mt-3 space-y-2">
+          <button
+            type="button"
+            className="btn-outline w-full"
+            onClick={() => void startShare(last.files, last.text)}
+          >
+            {tx(
+              "Send the last customer again on WhatsApp",
+              "पिछला ग्राहक WhatsApp पर दोबारा भेजें",
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn-outline w-full"
+            onClick={() =>
+              window.open(
+                `https://wa.me/${OWNER_WA}?text=${encodeURIComponent(last.text)}`,
+                "_blank",
+              )
+            }
+          >
+            💬{" "}
+            {tx(
+              "Send the details as a text message",
+              "विवरण टेक्स्ट मैसेज के रूप में भेजें",
+            )}
+          </button>
+          <button
+            type="button"
+            className="btn-outline w-full"
+            onClick={() => {
+              try {
+                void navigator.clipboard?.writeText(last.text);
+              } catch {
+                /* ignore */
+              }
+            }}
+          >
+            📋 {tx("Copy the details", "विवरण कॉपी करें")}
+          </button>
+        </div>
       )}
     </div>
   );
