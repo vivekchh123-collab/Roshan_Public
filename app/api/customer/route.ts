@@ -1,41 +1,66 @@
-import { NextResponse } from 'next/server';
-import { getEmployee } from '@/lib/auth';
-import { db } from '@/lib/supabase';
+import { NextResponse } from "next/server";
+import { getEmployee } from "@/lib/auth";
+import { db } from "@/lib/supabase";
 
-export const runtime = 'nodejs';
+export const runtime = "nodejs";
 
 // Saves ONLY the text details (name, mobile, location, status, reason) so the owner website can list them.
 // No photo is ever stored. The photos and the message go to the owner on WhatsApp from the employee's phone (see CustomerForm).
 export async function POST(req: Request) {
   const emp = await getEmployee();
-  if (!emp) return NextResponse.json({ error: 'Not allowed' }, { status: 403 });
+  if (!emp) return NextResponse.json({ error: "Not allowed" }, { status: 403 });
   const b = await req.json().catch(() => null);
-  if (!b) return NextResponse.json({ error: 'Bad request' }, { status: 400 });
+  if (!b) return NextResponse.json({ error: "Bad request" }, { status: 400 });
 
-  const name = String(b.name || '').trim().slice(0, 100);
-  const mobile = String(b.mobile || '').replace(/\D/g, '');
-  const location = String(b.location || '').trim().slice(0, 300);
-  const lat = Number(b.lat), lng = Number(b.lng);
+  const name = String(b.name || "")
+    .trim()
+    .slice(0, 100);
+  const mobile = String(b.mobile || "").replace(/\D/g, "");
+  const location = String(b.location || "")
+    .trim()
+    .slice(0, 300);
+  const lat = Number(b.lat),
+    lng = Number(b.lng);
   const interested = b.interested === true;
-  const reason = String(b.reason || '').trim().slice(0, 500);
+  const reason = String(b.reason || "")
+    .trim()
+    .slice(0, 500);
   const callback = b.callback ? new Date(String(b.callback)) : null;
 
-  if (!name || mobile.length !== 10) return NextResponse.json({ error: 'Enter customer name and a 10-digit mobile number.' }, { status: 400 });
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return NextResponse.json({ error: 'Please capture the current location.' }, { status: 400 });
-  if (!interested && (!reason || !callback || isNaN(+callback))) return NextResponse.json({ error: 'Enter the reason and preferred callback date/time.' }, { status: 400 });
+  if (!name || mobile.length !== 10)
+    return NextResponse.json(
+      { error: "Enter customer name and a 10-digit mobile number." },
+      { status: 400 },
+    );
+  if (!Number.isFinite(lat) || !Number.isFinite(lng))
+    return NextResponse.json(
+      { error: "Please capture the current location." },
+      { status: 400 },
+    );
+  if (!interested && (!reason || !callback || isNaN(+callback)))
+    return NextResponse.json(
+      { error: "Enter the reason and preferred callback date/time." },
+      { status: 400 },
+    );
 
   const { data: row, error } = await db()
-    .from('customers')
+    .from("customers")
     .insert({
-      name, mobile, location, lat, lng,
-      status: interested ? 'interested' : 'not_interested', // shows in the owner's "Customer interested" list
-      employee_id: emp.id, employee_name: emp.displayName,
+      name,
+      mobile,
+      location,
+      lat,
+      lng,
+      status: interested ? "interested" : "not_interested", // shows in the owner's "Customer interested" list
+      employee_id: emp.id,
+      employee_name: emp.displayName,
       reason: interested ? null : reason,
       callback_at: interested ? null : callback!.toISOString(),
     })
-    .select('id')
+    .select("id")
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true, id: row.id });
 }
